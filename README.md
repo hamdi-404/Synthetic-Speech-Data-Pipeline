@@ -40,20 +40,20 @@ Both tracks produce the same output schema so they can be combined directly. The
 ┌─────────────────────────────────────────────────────────────────┐
 │                        SSDP — Track A                           │
 │                                                                 │
-│  Stage 1           Stage 2           Stage 3        Stage 4    │
-│  Text Gen    ──►   TTS Synthesis ──► Review    ──►  Export     │
+│  Stage 1           Stage 2           Stage 3        Stage 4     │
+│  Text Gen    ──►   TTS Synthesis ──► Review    ──►  Export      │
 │  (Gemma-4)         (NAMAA-TTS)       (Whisper)      (HF format) │
 │                                                                 │
-│  egyptian_dataset  namaa/            reviewed/      dataset/   │
-│  .jsonl            manifest.jsonl    namaa_reviewed  metadata  │
-│                    + *.wav           .jsonl          .csv      │
+│  egyptian_dataset  namaa/            reviewed/      dataset/    │
+│  .jsonl            manifest.jsonl    namaa_reviewed  metadata   │
+│                    + *.wav           .jsonl          .csv       │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
-│                  Real Speech Pipeline — Track B                  │
+│                  Real Speech Pipeline — Track B                 │
 │                                                                 │
 │  Collection      Cleaning            STT              Export    │
-│  YouTube    ──►  inaSpeechSegmenter ──► Whisper   ──►  HF      │
+│  YouTube    ──►  inaSpeechSegmenter ──► Whisper   ──►  HF       │
 │  Web sounds      (diarization,          large-v3       schema   │
 │  Speech repos    silence removal,       auto-                   │
 │  (~90 hrs)       music detection)       transcription           │
@@ -124,7 +124,6 @@ A personal Qwen TTS model fine-tuned on Egyptian Arabic speech was considered bu
 
 ### Known limitations of NAMAA-TTS
 
-- **Single speaker**: all audio comes from one voice. The STT model trained on this data will be biased toward that speaker's characteristics.
 - **Clean studio conditions**: no background noise, no channel effects. The model will likely under-perform on phone audio or noisy environments unless real data is also included.
 - **Prosody on long sentences**: sentences over approximately 15 words can produce unnatural pauses or stress patterns.
 - **Code-switched segments**: the model occasionally mispronounces embedded English words. These samples will be caught by the WER filter in Stage 3.
@@ -145,7 +144,7 @@ Each synthesized WAV is transcribed by a fine-tuned Whisper model and the transc
 
 **`itshamdi404/Egy_Arabic_whisper-small`** is a Whisper-small model fine-tuned specifically on Egyptian Arabic. Using a general Whisper model for review would introduce a dialect mismatch in the evaluator itself — a general model might legitimately transcribe an Egyptian word differently from the TTS prompt text, flagging valid audio as erroneous. Using an Egyptian-fine-tuned evaluator makes the WER/CER scores reflect genuine synthesis quality rather than dialect mismatch between evaluator and synthesizer.
 
-Note: The personal Qwen TTS fine-tune was also not used here as the review model — its Upper Egyptian dialect training would cause it to transcribe Cairene speech with systematic errors, producing unreliable WER/CER scores.
+
 
 ### Arabic normalization
 
@@ -164,26 +163,15 @@ Without this normalization, a WER score of 0.5 might be entirely due to encoding
 
 | Label | Condition | Action |
 |---|---|---|
-| Accept | WER ≤ 0.30 and CER ≤ 0.20 | Exported to training set |
-| Flag | WER 0.15–0.30 or CER 0.10–0.20 | Held for human review |
-| Reject | WER > 0.30 or CER > 0.20 | Excluded |
+| Accept | WER ≤ 0.15 AND CER ≤ 0.10 | Exported to training set |
+| Flag | WER > 0.15 OR CER > 0.10 (and not rejected) | Held for human review |
+| Reject | WER > 0.30 OR CER > 0.20 | Excluded |
 
-### Manual review interface
-
-Flagged samples are held in `reviewed/namaa_reviewed.jsonl` with label `"flag"`. To inspect them, run the included `review_flagged.py` script:
-
-```bash
-python review_flagged.py --manifest reviewed/namaa_reviewed.jsonl
-```
-
-The script iterates over flagged samples, plays each WAV using `sounddevice`, prints the original text and WER/CER scores, and prompts for a decision:
-
-- `a` — accept (promotes to training set)
-- `r` — reject (excludes permanently)
-- `s` — skip (leaves as flagged for later)
-
-Decisions are written back to the manifest in place. Running the export stage after review will include any newly promoted samples.
-
+### Manual review
+ 
+Flagged samples are held in `reviewed/namaa_reviewed.jsonl` with label `"flag"`. The review manifest is a plain JSONL file — each line contains the audio path, original text, WER, CER, and label — so flagged samples can be inspected directly by opening the file, locating the audio path, and listening to the WAV alongside the transcript.
+ 
+The export stage (Stage 4) currently exports only samples labelled `"accept"`. To promote a flagged sample after manual listening, change its label from `"flag"` to `"accept"` in `namaa_reviewed.jsonl` and re-run the export cell — it will be included in the output dataset.
 ---
 
 ## Stage 4 — Training-Ready Export
@@ -343,7 +331,7 @@ The following issues were observed during development and should be factored int
 
 This submission includes 60 sample (audio, transcript) pairs split across both tracks.
 
-### 30 synthetic samples (`sampled_audio/` + `30_sampled_metadata.csv`)
+### 30 synthetic samples (`synthetic_audio/` + `synthetic_metadata.csv`)
 
 Selected as the 30 best-scoring samples from the full synthetic run, ranked by combined WER + CER. These represent the upper end of synthesis quality — clean audio, accurate transcriptions, consistent Cairene dialect. Each file is named by prompt ID (e.g. `prompt_00012.wav`) and the matching transcript is in `30_sampled_metadata.csv`.
 
@@ -360,17 +348,7 @@ The transcript for each real sample is the **Whisper large-v3 automatic transcri
 
 Some transcripts may contain errors — wrong words, skipped words, or MSA substitutions for colloquial Egyptian terms. The audio is authentic; the transcript is a best-effort automatic annotation. If you spot an obvious error in a transcript while listening, that is expected and reflects the transcription limitation described in the Trade-offs section, not a problem with the audio.
 
-### Metadata schema (both tracks)
 
-```
-file_name        path to the WAV file
-transcription    the transcript (ground truth for synthetic, Whisper output for real)
-category         topic category (synthetic) or empty string (real)
-wer              WER vs Whisper reviewer (synthetic) or empty (real)
-cer              CER vs Whisper reviewer (synthetic) or empty (real)
-model            "namaa" (synthetic) or "real" (real)
-source           "synthetic" or "real"
-```
 
 ---
 
@@ -395,50 +373,33 @@ source           "synthetic" or "real"
 
 ---
 
+
 ## Running the Pipeline
-
+ 
 ### Requirements
-
+ 
+Use the provided `requirements.txt` for exact versions:
+ 
 ```bash
-pip install torch transformers kagglehub huggingface-hub safetensors \
-            chatterbox soundfile librosa jiwer sounddevice datasets
+pip install -r requirements.txt 
 ```
+ 
 
+ 
 ### Execution
-
+ 
 Run the notebook cells in order. Each stage can be re-run independently — it will resume from where it left off.
-
+ 
 ```
-Stage 1: generates egyptian_dataset.jsonl
-Stage 2: generates namaa/manifest.jsonl + namaa/*.wav
-Stage 3: generates reviewed/namaa_reviewed.jsonl
-Stage 4: generates dataset/ directory
+Stage 1  →  egyptian_dataset.jsonl              (text prompts, checkpointed per category)
+Stage 2  →  namaa/manifest.jsonl + namaa/*.wav  (synthesis, resumable)
+Stage 3  →  reviewed/namaa_reviewed.jsonl       (WER/CER scores, resumable)
+Stage 4  →  dataset/metadata.csv               (training-ready, 16 kHz mono WAVs)
+            dataset/data/*.wav
+            dataset/dataset_info.json
 ```
+ 
 
-### Reviewing flagged samples
-
-```bash
-python review_flagged.py --manifest reviewed/namaa_reviewed.jsonl
-```
-
-### Loading the exported dataset
-
-```python
-from datasets import load_dataset
-ds = load_dataset("audiofolder", data_dir="dataset/", split="train")
-```
-
-### Combining synthetic and real data
-
-```python
-from datasets import load_dataset, concatenate_datasets
-
-synthetic = load_dataset("audiofolder", data_dir="dataset/", split="train")
-real      = load_dataset("audiofolder", data_dir="real_dataset/", split="train")
-
-combined  = concatenate_datasets([synthetic, real])
-```
-
----
-
+ 
 *Pipeline by Hamdi Mohamed — submitted as part of the Olimi AI case study.*
+ 
